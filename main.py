@@ -79,7 +79,7 @@ get_message_button = types.InlineKeyboardMarkup(
 async def cmd_start(message: types.Message):
     """Отправляет приветственное сообщение с кнопкой."""
     await message.answer(
-        f"Привет! Это твой адвент-календарь на {MAX_DAY} дней. "
+        f"Привет! Это твой адвент-календарь на декабрь. "
         "Нажимай кнопку, чтобы открыть секрет!",
         reply_markup=get_message_button
     )
@@ -156,5 +156,6 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
 
 
