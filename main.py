@@ -56,7 +56,6 @@ ADVENT_MESSAGES = {
     # Добавьте свои послания для дней 5, 6, 7, ... до 24 или 31
     # Например:
     # 24: "🎄 Послание на 24-е: С Наступающим! Ты - моё главное сокровище.",
-}
 # Определяем максимальный день в календаре
 MAX_DAY = max(ADVENT_MESSAGES.keys()) if ADVENT_MESSAGES else 0
 
@@ -156,6 +155,7 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
 
 
 
