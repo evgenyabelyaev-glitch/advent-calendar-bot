@@ -43,7 +43,7 @@ dp = Dispatcher()
 # Создание Inline-кнопки
 get_message_button = types.InlineKeyboardMarkup(
     inline_keyboard=[
-        [types.InlineKeyboardButton(text="🎁 Получить послание дня", callback_data="get_advent_message")]
+        [types.InlineKeyboardButton(text="Открыть🎁", callback_data="get_advent_message")]
     ]
 )
 
@@ -69,7 +69,7 @@ async def process_advent_callback(callback: types.CallbackQuery):
 
     if today_day > MAX_DAY:
         # Календарь закончился
-        text = "🎉 Весь адвент-календарь уже открыт! Надеюсь, тебе понравилось! 🎉"
+        text = "😴Еще рано, приходи 1 декабря😴"
     elif today_day not in ADVENT_MESSAGES:
         # Сегодняшний день в календаре есть, но для него нет текста (например, 25-31)
         text = f"😴 Послание на {today_day}-е число не найдено. Проверь завтра!"
@@ -128,3 +128,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
