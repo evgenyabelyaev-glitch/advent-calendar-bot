@@ -23,7 +23,7 @@ except locale.Error:
 # --- КОНФИГУРАЦИЯ ---
 # Токен бота будет получен из переменной окружения Railway (БОЛЕЕ БЕЗОПАСНО)
 # Если переменная не найдена, используется "ВАШ_ТОКЕН_БОТА" (только для локальной проверки)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8317813238:AAEZly_kyYMZK961uJ32FVYR6xiB31XPylA") 
 
 # Cloud/Railway требует запуска веб-сервера на порту, который он предоставит
 WEB_SERVER_PORT = int(os.getenv("PORT", 8080))
@@ -34,7 +34,7 @@ TARGET_TZ = timezone(timedelta(hours=3), name='MSK')
 
 # !!! ВАЖНО: ЗАМЕНИТЕ ЭТО НА ВАШ РЕАЛЬНЫЙ ТЕЛЕГРАМ ID (ЧИСЛО!) !!!
 # Сюда будут пересылаться сообщения от пользователя.
-ADMIN_ID = os.getenv("ADMIN_ID", "ВАШ_ADMIN_ID")
+ADMIN_ID = os.getenv("ADMIN_ID", "1126029973")
 
 # --- СООБЩЕНИЯ АДВЕНТ-КАЛЕНДАРЯ ---
 # КЛЮЧ - ДЕНЬ МЕСЯЦА (1, 2, 3...), ЗНАЧЕНИЕ - ТЕКСТ ПОСЛАНИЯ
@@ -171,7 +171,7 @@ async def forward_all_messages(message: types.Message):
     
     try:
         # Проверяем, что ADMIN_ID установлен и не является заглушкой
-        if ADMIN_ID and ADMIN_ID != "ВАШ_ADMIN_ID":
+        if ADMIN_ID and ADMIN_ID != "1126029973":
             
             # Сообщение, которое будет отправлено администратору
             caption = html.bold("НОВОЕ СООБЩЕНИЕ ОТ ПОЛЬЗОВАТЕЛЯ:\n")
@@ -245,3 +245,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
