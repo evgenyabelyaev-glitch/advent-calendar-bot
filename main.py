@@ -52,7 +52,7 @@ ADVENT_MESSAGES = {
     29: "🗺️ Послание на 29-е: Куда бы ни привела нас жизнь, я всегда буду рядом.",
     30: "💌 Послание на 30-е: Это почти финал! Знай, ты — самое лучшее, что со мной случилось.",
     31: "🥳 Послание на 31-е: Поздравляю! Мы это сделали! Отпразднуем? Ты — мой главный подарок в жизни."
-} # <-- Нет запятой после последнего элемента
+} 
 # Определяем максимальный день в календаре
 MAX_DAY = max(ADVENT_MESSAGES.keys()) if ADVENT_MESSAGES else 0
 
@@ -84,11 +84,16 @@ async def cmd_start(message: types.Message):
 async def process_advent_callback(callback: types.CallbackQuery):
     """
     Основная логика: сверяет текущий день и месяц с календарем.
+    Использует единый режим парсинга HTML для чистого отображения.
     """
     # 1. Получаем текущие дату и месяц в заданном часовом поясе
     current_date = datetime.now(TARGET_TZ)
     today_day = current_date.day
-    today_month = current_date.month # <--- НОВЫЙ КОД: Получаем номер месяца
+    today_month = current_date.month
+    
+    # Приводим название месяца в нижний регистр для русского языка.
+    # %B (полное название месяца) в зависимости от локали может быть на английском. 
+    # Если на вашей машине локаль EN, замените на 'декабрь' вручную для большей надежности.
     today_month_name = current_date.strftime('%B').lower()
 
     # --- НОВАЯ ГЛАВНАЯ ПРОВЕРКА: ЕСЛИ НЕ ДЕКАБРЬ ---
@@ -106,16 +111,19 @@ async def process_advent_callback(callback: types.CallbackQuery):
         text = f"😴 Послание на {today_day}-е число не найдено. Проверь завтра!"
         
     elif today_day < today_day:
-        # Это не должно сработать, но служит логическим барьером.
+        # Логический барьер.
         text = f"🚫 Подожди! Сегодня только {today_day}-е число. Следующее послание откроется завтра!"
         
     else:
         # Выдаем послание, соответствующее сегодняшнему дню (только в Декабре)
         message_text = ADVENT_MESSAGES.get(today_day)
-        text = (f"🗓️ **Послание на {today_day} {today_month_name}:**\n\n"
+        
+        # --- ИСПРАВЛЕНО: Теперь используем html.bold() для заголовка, чтобы избежать ** и <b> ---
+        text = (f"🗓️ {html.bold(f'Послание на {today_day} {today_month_name}:')}\n\n"
                 f"{html.bold(message_text)}")
 
-    await callback.message.answer(text, reply_markup=get_message_button)
+    # --- ИСПРАВЛЕНО: Явно указываем parse_mode='HTML' ---
+    await callback.message.answer(text, reply_markup=get_message_button, parse_mode='HTML')
     # Отвечаем на запрос, чтобы убрать "часики" с кнопки
     await callback.answer()
 
@@ -160,4 +168,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
