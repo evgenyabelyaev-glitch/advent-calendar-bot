@@ -23,7 +23,7 @@ except locale.Error:
 # --- КОНФИГУРАЦИЯ ---
 # Токен бота будет получен из переменной окружения Railway (БОЛЕЕ БЕЗОПАСНО)
 # Если переменная не найдена, используется "ВАШ_ТОКЕН_БОТА" (только для локальной проверки)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8317813238:AAEZly_kyYMZK961uJ32FVYR6xiB31XPylA") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА") 
 
 # Cloud/Railway требует запуска веб-сервера на порту, который он предоставит
 WEB_SERVER_PORT = int(os.getenv("PORT", 8080))
@@ -34,7 +34,7 @@ TARGET_TZ = timezone(timedelta(hours=3), name='MSK')
 
 # !!! ВАЖНО: ЗАМЕНИТЕ ЭТО НА ВАШ РЕАЛЬНЫЙ ТЕЛЕГРАМ ID (ЧИСЛО!) !!!
 # Сюда будут пересылаться сообщения от пользователя.
-ADMIN_ID = os.getenv("ADMIN_ID", "1126029973")
+ADMIN_ID = os.getenv("ADMIN_ID", "ВАШ_ADMIN_ID")
 
 # --- СООБЩЕНИЯ АДВЕНТ-КАЛЕНДАРЯ ---
 # КЛЮЧ - ДЕНЬ МЕСЯЦА (1, 2, 3...), ЗНАЧЕНИЕ - ТЕКСТ ПОСЛАНИЯ
@@ -92,6 +92,11 @@ get_message_button = types.InlineKeyboardMarkup(
 @dp.message(F.text == "/start")
 async def cmd_start(message: types.Message):
     """Отправляет приветственное сообщение с кнопкой."""
+    
+    # --- ЛОГИРОВАНИЕ: Запуск бота ---
+    logging.info(f"USER_EVENT: START | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
+    # ---------------------------------
+    
     await message.answer(
         f"Привет! Это твой адвент-календарь на декабрь. "
         "Нажимай кнопку, чтобы открыть секрет!",
@@ -104,6 +109,11 @@ async def process_advent_callback(callback: types.CallbackQuery):
     Основная логика: сверяет текущий день и месяц с календарем.
     Использует единый режим парсинга HTML и русскую локаль для даты.
     """
+    
+    # --- ЛОГИРОВАНИЕ: Нажатие кнопки ---
+    logging.info(f"USER_EVENT: BUTTON_PRESS | Callback: {callback.data} | User ID: {callback.from_user.id} | Name: {callback.from_user.full_name}")
+    # ---------------------------------
+    
     # 1. Получаем текущие дату и месяц в заданном часовом поясе
     current_date = datetime.now(TARGET_TZ)
     today_day = current_date.day
@@ -135,6 +145,10 @@ async def process_advent_callback(callback: types.CallbackQuery):
         # В заголовок подставляем отформатированную русскую дату
         text = (f"🗓️ {html.bold(f'Послание на {formatted_date}:')}\n\n"
                 f"{html.bold(message_text)}")
+        
+        # --- ЛОГИРОВАНИЕ: Успешное открытие сообщения ---
+        logging.info(f"ADVENT_MESSAGE_SENT: Day {today_day} sent to User ID: {callback.from_user.id}")
+        # ------------------------------------------------
 
     # Явно указываем parse_mode='HTML'
     await callback.message.answer(text, reply_markup=get_message_button, parse_mode='HTML')
@@ -149,9 +163,15 @@ async def forward_all_messages(message: types.Message):
     которые не были перехвачены другими обработчиками, и пересылает 
     их администратору.
     """
+    
+    # --- ЛОГИРОВАНИЕ: Получение произвольного сообщения ---
+    log_text = message.text[:50] if message.text else f"Non-text message: {message.content_type}"
+    logging.info(f"USER_EVENT: ARBITRARY_MESSAGE | Content: '{log_text}' | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
+    # ------------------------------------------------------
+    
     try:
         # Проверяем, что ADMIN_ID установлен и не является заглушкой
-        if ADMIN_ID and ADMIN_ID != "1126029973":
+        if ADMIN_ID and ADMIN_ID != "ВАШ_ADMIN_ID":
             
             # Сообщение, которое будет отправлено администратору
             caption = html.bold("НОВОЕ СООБЩЕНИЕ ОТ ПОЛЬЗОВАТЕЛЯ:\n")
@@ -225,4 +245,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
