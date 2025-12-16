@@ -38,10 +38,11 @@ TARGET_TZ = timezone(timedelta(hours=3), name='MSK')
 # Исправлено: Установлен ID, предоставленный пользователем.
 ADMIN_ID = os.getenv("ADMIN_ID", "1126029973")
 
-# !!! ИДЕНТИФИКАТОР ПОЛУЧАТЕЛЯ !!!
-# Этот ID будет автоматически сохранен при первом взаимодействии пользователя, 
-# который не является ADMIN_ID. 
-TARGET_USER_ID = None
+# !!! ИДЕНТИФИКАТОРЫ ПОЛЬЗОВАТЕЛЕЙ !!!
+# Этот SET (набор) будет хранить ID всех пользователей, которые взаимодействовали с ботом.
+# Используется для рассылки сообщений (broadcast).
+# ВНИМАНИЕ: Данные хранятся только в памяти и будут сброшены при перезапуске бота.
+USER_IDS = set()
 
 # --- СООБЩЕНИЯ АДВЕНТ-КАЛЕНДАРЯ ---
 # КЛЮЧ - ДЕНЬ МЕСЯЦА (1, 2, 3...), ЗНАЧЕНИЕ - ТЕКСТ ПОСЛАНИЯ
@@ -64,10 +65,10 @@ ADVENT_MESSAGES = {
     14: "🫂 **Мы вместе.** Иногда планы идут не так, как хочется. Но знаешь что? Это не главное. Главное — мы справимся с чем угодно. Я здесь, чтобы поддержать тебя. Наши лучшие моменты ещё впереди. Обнимаю. ❤️", # Обновлено после неудачной фотосессии
     # === НЕДЕЛЯ 3: ВОЛШЕБСТВО И УДИВЛЕНИЕ ===
     15: "🏞️ **Наше мини-приключение.** Сегодня нас ждет небольшое путешествие: старинные здания и тишина зимнего леса. Наслаждайся каждым моментом, но помни: самое волшебное и теплое, что мы возьмем с собой — это мы сами. ❤️", # Адаптировано под поездку (монастырь, лес)
-    16: "💪 **Твоя суперсила.** Сегодня вспомни и напиши мне одну свою самую большую победу этого года. Это не обязательно что-то огромное, может быть, ты просто пережила сложный день. Знай, что ты невероятно сильная, и я это вижу. 💖", # Новое сообщение: Фокус на силе и достижениях
-    17: "🍿 Послание на 17-е: Предлагаю сегодня вечером просмотр фильма и никакого беспокойства :)",
+    16: "🎁Сегодня задание с наградой! Собери пазл на любой сложности (https://grandgames.net/puzzle/online/u_yolki__1), пришли мне итоговую картинку и ссылку на маркетплейс на штучку, которая сделала бы наш отпускной вечер в доме уютнее и сделала бы нас ближе💕", # Новое сообщение: Фокус на силе и достижениях
+    17: "",
     18: "☀️ Послание на 18-е: Даже в самый пасмурный день ты - моё солнце.",
-    19: "🎨 Послание на 19-е: ",
+    19: "🍿 Послание на 17-е: Предлагаю сегодня вечером просмотр фильма и никакого беспокойства :)",
     20: "🕰️ Послание на 20-е: Время, проведенное с тобой самое лучшее!",
     21: "🌳 Послание на 21-е: ",
     # === НЕДЕЛЯ 4: ФИНАЛ И ПРАЗДНИК ===
@@ -108,11 +109,10 @@ async def cmd_start(message: types.Message):
     logging.info(f"USER_EVENT: START | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
     # ---------------------------------
     
-    global TARGET_USER_ID
-    # Сохраняем ID пользователя, если он не является админом и ID еще не установлен
-    if str(message.from_user.id) != ADMIN_ID and TARGET_USER_ID is None:
-        TARGET_USER_ID = message.from_user.id
-        logging.info(f"TARGET_USER_ID set to: {TARGET_USER_ID}")
+    # Добавляем ID пользователя в SET для рассылки, если он не администратор
+    if str(message.from_user.id) != ADMIN_ID:
+        USER_IDS.add(message.from_user.id)
+        logging.info(f"USER_ID added to set: {message.from_user.id}")
 
     await message.answer(
         f"Привет! Это твой адвент-календарь на декабрь. "
@@ -130,11 +130,10 @@ async def process_advent_callback(callback: types.CallbackQuery):
     logging.info(f"USER_EVENT: BUTTON_PRESS | Callback: {callback.data} | User ID: {callback.from_user.id} | Name: {callback.from_user.full_name}")
     # ---------------------------------
     
-    global TARGET_USER_ID
-    # Сохраняем ID пользователя, если он не является админом и ID еще не установлен
-    if str(callback.from_user.id) != ADMIN_ID and TARGET_USER_ID is None:
-        TARGET_USER_ID = callback.from_user.id
-        logging.info(f"TARGET_USER_ID set to: {TARGET_USER_ID}")
+    # Добавляем ID пользователя в SET для рассылки, если он не администратор
+    if str(callback.from_user.id) != ADMIN_ID:
+        USER_IDS.add(callback.from_user.id)
+        logging.info(f"USER_ID added to set: {callback.from_user.id}")
 
     # 1. Получаем текущие дату и месяц в заданном часовом поясе
     current_date = datetime.now(TARGET_TZ)
@@ -178,37 +177,48 @@ async def process_advent_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(F.text.startswith("/sendtorecipient"), F.from_user.id == int(ADMIN_ID))
-async def cmd_send_to_recipient(message: types.Message):
+@dp.message(F.text.startswith("/broadcast"), F.from_user.id == int(ADMIN_ID))
+async def cmd_broadcast(message: types.Message):
     """
-    Позволяет администратору отправить произвольное сообщение получателю.
-    Формат: /sendtorecipient <текст сообщения>
+    Позволяет администратору отправить произвольное сообщение ВСЕМ пользователям.
+    Формат: /broadcast <текст сообщения>
     """
-    global TARGET_USER_ID
     
-    # 1. Проверяем, есть ли ID получателя
-    if TARGET_USER_ID is None:
-        return await message.answer("Ошибка: ID получателя не сохранен. Сначала получатель должен нажать /start.")
-
-    # 2. Извлекаем текст сообщения, удаляя команду
-    text_to_send = message.text.replace("/sendtorecipient", "", 1).strip()
+    # 1. Извлекаем текст сообщения, удаляя команду
+    text_to_send = message.text.replace("/broadcast", "", 1).strip()
 
     if not text_to_send:
-        return await message.answer("Пожалуйста, укажите текст для отправки. Формат: /sendtorecipient <текст>")
+        return await message.answer("Пожалуйста, укажите текст для рассылки. Формат: /broadcast <текст>")
 
-    try:
-        # 3. Отправляем сообщение получателю
-        await bot.send_message(
-            chat_id=TARGET_USER_ID,
-            text=text_to_send,
-            parse_mode='HTML' # Сохраняем режим HTML на случай форматирования
-        )
-        await message.answer(f"✅ Сообщение успешно отправлено получателю ({TARGET_USER_ID}).")
-        logging.info(f"ADMIN_BROADCAST: Admin {ADMIN_ID} sent message to {TARGET_USER_ID}")
-
-    except Exception as e:
-        await message.answer(f"❌ Ошибка отправки: {e}")
-        logging.error(f"ADMIN_BROADCAST_ERROR: Failed to send message from {ADMIN_ID} to {TARGET_USER_ID}: {e}")
+    if not USER_IDS:
+        return await message.answer("Ошибка: Нет сохраненных пользователей для рассылки. Сначала пользователи должны нажать /start.")
+    
+    success_count = 0
+    fail_count = 0
+    
+    # 2. Итерация по всем сохраненным ID
+    for user_id in list(USER_IDS): # Используем list() для безопасной итерации
+        try:
+            # 3. Отправляем сообщение пользователю
+            await bot.send_message(
+                chat_id=user_id,
+                text=text_to_send,
+                parse_mode='HTML'
+            )
+            success_count += 1
+        except Exception as e:
+            # Пользователь мог заблокировать бота, что вызовет ошибку.
+            fail_count += 1
+            logging.error(f"BROADCAST_ERROR: Failed to send message to {user_id}: {e}")
+    
+    # 4. Отправляем отчет администратору
+    await message.answer(
+        f"✅ Рассылка завершена.\n"
+        f"Всего получателей: {len(USER_IDS)}\n"
+        f"Успешно отправлено: {success_count}\n"
+        f"Неудачно (бот заблокирован/ошибка): {fail_count}"
+    )
+    logging.info(f"ADMIN_BROADCAST_REPORT: Total: {len(USER_IDS)}, Success: {success_count}, Fail: {fail_count}")
 
 
 @dp.message()
@@ -224,11 +234,10 @@ async def forward_all_messages(message: types.Message):
     logging.info(f"USER_EVENT: ARBITRARY_MESSAGE | Content: '{log_text}' | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
     # ------------------------------------------------------
     
-    # Сохраняем ID пользователя, если он не является админом и ID еще не установлен
-    global TARGET_USER_ID
-    if str(message.from_user.id) != ADMIN_ID and TARGET_USER_ID is None:
-        TARGET_USER_ID = message.from_user.id
-        logging.info(f"TARGET_USER_ID set to: {TARGET_USER_ID}")
+    # Сохраняем ID пользователя в SET для рассылки, если он не администратор
+    if str(message.from_user.id) != ADMIN_ID:
+        USER_IDS.add(message.from_user.id)
+        logging.info(f"USER_ID added to set from forward_all_messages: {message.from_user.id}")
 
     try:
         # Проверяем, что ADMIN_ID установлен и не является заглушкой
