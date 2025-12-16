@@ -156,9 +156,9 @@ ADVENT_MESSAGES = {
     # === НЕДЕЛЯ 3: ВОЛШЕБСТВО И УДИВЛЕНИЕ ===
     15: "🏞️ **Наше мини-приключение.** Сегодня нас ждет небольшое путешествие: старинные здания и тишина зимнего леса. Наслаждайся каждым моментом, но помни: самое волшебное и теплое, что мы возьмем с собой — это мы сами. ❤️", # Адаптировано под поездку (монастырь, лес)
     16: "🎁Сегодня задание с наградой! Собери пазл на любой сложности (https://grandgames.net/puzzle/online/u_yolki__1), пришли мне итоговую картинку и ссылку на маркетплейс на штучку, которая сделала бы наш отпускной вечер в доме уютнее и сделала бы нас ближе💕", # Новое сообщение: Фокус на силе и достижениях
-    17: "🍿 Послание на 17-е: Предлагаю сегодня вечером просмотр фильма и никакого беспокойства :)",
+    17: "",
     18: "☀️ Послание на 18-е: Даже в самый пасмурный день ты - моё солнце.",
-    19: "🎨 Послание на 19-е: ",
+    19: "🍿 Послание на 17-е: Предлагаю сегодня вечером просмотр фильма и никакого беспокойства :)",
     20: "🕰️ Послание на 20-е: Время, проведенное с тобой самое лучшее!",
     21: "🌳 Послание на 21-е: ",
     # === НЕДЕЛЯ 4: ФИНАЛ И ПРАЗДНИК ===
@@ -225,3 +225,294 @@ async def cmd_force_save_user(message: types.Message):
     target_user_ids = await get_all_user_ids_from_db()
     if str(user_id) in target_user_ids:
         await message.answer(
+            f"✅ Пользователь **{full_name}** (ID: `{user_id}`) **успешно добавлен** в базу данных Firestore.\n"
+            "Теперь он должен получать рассылки.",
+            parse_mode='Markdown'
+        )
+    else:
+        await message.answer(
+            f"⚠️ Пользователь **{full_name}** (ID: `{user_id}`) был обработан, но **не найден** при повторной проверке базы. Возможно, возникла ошибка доступа к Firestore. Проверьте логи.",
+            parse_mode='Markdown'
+        )
+
+@dp.message(F.text == "/check_users", F.from_user.id == int(ADMIN_ID))
+async def cmd_check_users(message: types.Message):
+    """Проверяет количество сохраненных пользователей в Firestore."""
+    logging.info(f"ADMIN_EVENT: /check_users initiated by {message.from_user.id}")
+    
+    if not db:
+        await message.answer("❌ Ошибка: База данных Firebase не инициализирована. Проверьте логи на ошибки при запуске.")
+        return
+
+    try:
+        target_user_ids = await get_all_user_ids_from_db()
+        count = len(target_user_ids)
+        
+        if count == 0:
+            report_text = "⚠️ В базе данных **нет сохраненных пользователей** (помимо администратора)."
+        else:
+            report_text = f"✅ В базе данных обнаружено **{count}** сохраненных пользователей."
+            # Добавим список ID для отладки
+            id_list = "\n".join(f"- `{id}`" for id in sorted(list(target_user_ids)))
+            
+            # Показываем только первые 10 ID, если их много
+            if len(target_user_ids) > 10:
+                report_text += "\n\n(Показаны только первые 10 ID)"
+                id_list = "\n".join(f"- `{id}`" for id in sorted(list(target_user_ids))[:10])
+                
+            report_text += f"\n\n**Список ID:**\n{id_list}"
+
+        await message.answer(report_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error during /check_users command: {e}")
+        await message.answer(f"❌ Произошла ошибка при получении данных из базы: {e}")
+
+
+@dp.message(F.text == "/start")
+async def cmd_start(message: types.Message):
+    """Отправляет приветственное сообщение с кнопкой и сохраняет ID пользователя."""
+    
+    # --- ЛОГИРОВАНИЕ: Запуск бота ---
+    logging.info(f"USER_EVENT: START | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
+    # ---------------------------------
+    
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
+    if str(message.from_user.id) != ADMIN_ID:
+        await save_user_id(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name
+        )
+
+    await message.answer(
+        f"Привет! Это твой адвент-календарь на декабрь. "
+        "Нажимай кнопку, чтобы открыть секрет!",
+        reply_markup=get_message_button
+    )
+
+@dp.callback_query(F.data == "get_advent_message")
+async def process_advent_callback(callback: types.CallbackQuery):
+    """
+    Основная логика: сверяет текущий день и месяц с календарем, сохраняет ID пользователя 
+    и отправляет уведомление администратору о нажатии кнопки.
+    """
+    
+    # --- ЛОГИРОВАНИЕ: Нажатие кнопки ---
+    logging.info(f"USER_EVENT: BUTTON_PRESS | Callback: {callback.data} | User ID: {callback.from_user.id} | Name: {callback.from_user.full_name}")
+    # ---------------------------------
+    
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
+    if str(callback.from_user.id) != ADMIN_ID:
+        await save_user_id(
+            user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            full_name=callback.from_user.full_name
+        )
+    
+    # --- УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ О НАЖАТИИ КНОПКИ ---
+    notification_text = (
+        f"🔔 {html.bold('КНОПКА АДВЕНТ-КАЛЕНДАРЯ НАЖАТА!')}\n"
+        f"Пользователь: {html.bold(callback.from_user.full_name)}\n"
+        f"ID: {html.code(callback.from_user.id)}\n"
+        f"Время: {datetime.now(TARGET_TZ).strftime('%H:%M:%S')}"
+    )
+    
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID, 
+            text=notification_text, 
+            parse_mode='HTML'
+        )
+        logging.info(f"ADMIN_NOTIFICATION: Button press notification sent for User ID: {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"Error sending button notification to ADMIN_ID {ADMIN_ID}: {e}")
+    # --------------------------------------------------
+
+    # 1. Получаем текущие дату и месяц в заданном часовом поясе
+    current_date = datetime.now(TARGET_TZ)
+    today_day = current_date.day
+    today_month = current_date.month
+    
+    # 2. Форматируем дату в нужный русский формат (например, "2 декабря")
+    # %d - день, %B - полное название месяца (будет в родительном падеже благодаря locale)
+    formatted_date = current_date.strftime('%d %B')
+
+    # --- ГЛАВНАЯ ПРОВЕРКА: ЕСЛИ НЕ ДЕКАБРЬ ---
+    if today_month != 12:
+        # Если не Декабрь, выдаем сообщение ожидания.
+        text = "😴 Еще рано, приходи 1 декабря! 😴"
+    
+    # --- ЛОГИКА ДЛЯ ДЕКАБРЯ ---
+    elif today_day > MAX_DAY:
+        # Календарь закончился
+        text = "🎉 Весь адвент-календарь уже открыт! Надеюсь, тебе понравилось! 🎉"
+    
+    elif today_day not in ADVENT_MESSAGES:
+        # Сегодняшний день в календаре есть, но для него нет текста
+        text = f"😴 Послание на {formatted_date} не найдено. Проверь завтра!"
+        
+    else:
+        # Выдаем послание, соответствующее сегодняшнему дню (только в Декабре)
+        message_text = ADVENT_MESSAGES.get(today_day)
+        
+        # Используем HTML-форматирование для заголовка и основного текста
+        # В заголовок подставляем отформатированную русскую дату
+        text = (f"🗓️ {html.bold(f'Послание на {formatted_date}:')}\n\n"
+                f"{html.bold(message_text)}")
+        
+        # --- ЛОГИРОВАНИЕ: Успешное открытие сообщения ---
+        logging.info(f"ADVENT_MESSAGE_SENT: Day {today_day} sent to User ID: {callback.from_user.id}")
+        # ------------------------------------------------
+
+    # Явно указываем parse_mode='HTML'
+    await callback.message.answer(text, reply_markup=get_message_button, parse_mode='HTML')
+    # Отвечаем на запрос, чтобы убрать "часики" с кнопки
+    await callback.answer()
+
+
+@dp.message(F.text.startswith("/broadcast"), F.from_user.id == int(ADMIN_ID))
+async def cmd_broadcast(message: types.Message):
+    """
+    Позволяет администратору отправить произвольное сообщение ВСЕМ пользователям.
+    Формат: /broadcast <текст сообщения>
+    """
+    
+    # 1. Извлекаем текст сообщения, удаляя команду
+    text_to_send = message.text.replace("/broadcast", "", 1).strip()
+
+    if not text_to_send:
+        return await message.answer("Пожалуйста, укажите текст для рассылки. Формат: /broadcast <текст>")
+
+    # 2. Загружаем актуальный список пользователей из Firestore
+    target_user_ids = await get_all_user_ids_from_db()
+    
+    if not target_user_ids:
+        # Улучшенный ответ, чтобы предложить отладку
+        return await message.answer("❌ Ошибка: Нет сохраненных пользователей для рассылки в базе данных. Попробуйте команду /check_users для отладки.")
+    
+    success_count = 0
+    fail_count = 0
+    
+    # 3. Итерация по всем сохраненным ID
+    for user_id in target_user_ids: # Используем SET из базы
+        try:
+            # 4. Отправляем сообщение пользователю
+            await bot.send_message(
+                chat_id=int(user_id), # ID из Firestore - строка, преобразуем в число
+                text=text_to_send,
+                parse_mode='HTML'
+            )
+            success_count += 1
+        except Exception as e:
+            # Пользователь мог заблокировать бота
+            fail_count += 1
+            logging.error(f"BROADCAST_ERROR: Failed to send message to {user_id}: {e}")
+    
+    # 5. Отправляем отчет администратору
+    await message.answer(
+        f"✅ Рассылка завершена.\n"
+        f"Всего получателей (из базы): {len(target_user_ids)}\n"
+        f"Успешно отправлено: {success_count}\n"
+        f"Неудачно (бот заблокирован/ошибка): {fail_count}"
+    )
+    logging.info(f"ADMIN_BROADCAST_REPORT: Total: {len(target_user_ids)}, Success: {success_count}, Fail: {fail_count}")
+
+
+@dp.message()
+async def forward_all_messages(message: types.Message):
+    """
+    Обрабатывает любые сообщения (текст, фото, стикеры и т.д.), 
+    которые не были перехвачены другими обработчиками, и пересылает 
+    их администратору, а также сохраняет ID пользователя.
+    """
+    
+    # --- ЛОГИРОВАНИЕ: Получение произвольного сообщения ---
+    log_text = message.text[:50] if message.text else f"Non-text message: {message.content_type}"
+    logging.info(f"USER_EVENT: ARBITRARY_MESSAGE | Content: '{log_text}' | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
+    # ------------------------------------------------------
+    
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
+    if str(message.from_user.id) != ADMIN_ID:
+        await save_user_id(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name
+        )
+
+    try:
+        # Проверяем, что ADMIN_ID установлен и не является заглушкой
+        if ADMIN_ID and ADMIN_ID != "ВАШ_ADMIN_ID":
+            
+            # Сообщение, которое будет отправлено администратору
+            caption = html.bold("НОВОЕ СООБЩЕНИЕ ОТ ПОЛЬЗОВАТЕЛЯ:\n")
+            caption += f"ID пользователя: {html.code(message.chat.id)}\n"
+            caption += f"Имя: {html.bold(message.from_user.full_name)}"
+            
+            # Отправляем администратору информацию о том, от кого сообщение
+            await bot.send_message(
+                chat_id=ADMIN_ID, 
+                text=caption, 
+                parse_mode='HTML'
+            )
+            
+            # Пересылаем само сообщение администратору
+            await bot.forward_message(
+                chat_id=ADMIN_ID,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+            
+        else:
+            # Если ADMIN_ID не настроен, просто логируем, чтобы не терять сообщения
+            logging.warning(f"Сообщение получено от {message.from_user.full_name} ({message.chat.id}), но ADMIN_ID не настроен для пересылки.")
+            
+    except Exception as e:
+        logging.error(f"Ошибка при пересылке сообщения: {e}")
+        # Если пересылка не удалась (например, бот не может начать чат с админом)
+        await message.answer("Произошла ошибка при обработке вашего сообщения.")
+
+
+# --- НАСТРОЙКА ДЛЯ RENDER (WEBHOOK) ---
+async def main():
+    """
+    Инициализирует Firebase и запускает веб-сервер для обработки вебхуков.
+    """
+    # Инициализация Firebase перед запуском бота
+    init_firebase()
+    
+    try:
+        from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+        
+        # Создаем aiohttp приложение
+        app = web.Application()
+        setup_application(app, dp)
+        
+        # Регистрируем обработчик запросов по пути "/webhook"
+        SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        ).register(app, "/webhook")
+
+        # Запускаем runner
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        # Render/Cloud требует привязки к 0.0.0.0 и прослушивания порта из переменной PORT
+        site = web.TCPSite(runner, '0.0.0.0', WEB_SERVER_PORT)
+        logging.info(f"Starting web server on port {WEB_SERVER_PORT}")
+        await site.start()
+        
+        # Ждём, пока веб-сервер обрабатывает запросы
+        while True:
+            await asyncio.sleep(3600)
+            
+    except Exception as e:
+        logging.error(f"Error during webhook setup: {e}")
+        # Если не удалось запустить вебхук (например, при локальной отладке без порта)
+        logging.info("Falling back to polling mode...")
+        await dp.start_polling(bot)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
