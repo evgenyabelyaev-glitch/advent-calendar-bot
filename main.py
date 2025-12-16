@@ -48,9 +48,6 @@ APP_ID = os.environ.get('__app_id', 'default-app-id')
 FIREBASE_CONFIG_JSON = os.environ.get('__firebase_config')
 
 # --- ИДЕНТИФИКАТОРЫ ПОЛЬЗОВАТЕЛЕЙ (Теперь только для инициализации) ---
-# Теперь ID пользователей будут храниться в Firestore, а не в памяти.
-# Это временное хранилище теперь не используется для рассылки, но сохраним его как заглушку.
-# Для рассылки будем запрашивать актуальный список из базы.
 USER_IDS = set() 
 
 # --- НАСТРОЙКА FIREBASE ---
@@ -60,20 +57,25 @@ def init_firebase():
     global db
     if FIREBASE_CONFIG_JSON and not firebase_admin._apps:
         try:
-            # Преобразуем JSON-строку в словарь для credentials
             firebase_config = json.loads(FIREBASE_CONFIG_JSON)
             
-            # Подход 1: Простая инициализация (если окружение позволяет)
-            firebase_admin.initialize_app(options={'projectId': firebase_config.get('projectId')})
+            # Используем предоставленную структуру конфигурации для опций инициализации
+            options = {'projectId': firebase_config.get('projectId')}
+            
+            # Пытаемся инициализировать без явных учетных данных, полагаясь на окружение
+            firebase_admin.initialize_app(options=options)
             
             db = firestore.client()
-            logging.info("Firebase initialized successfully.")
+            logging.info("Firebase initialized successfully. Firestore client ready.")
             return True
         except Exception as e:
-            logging.error(f"Failed to initialize Firebase: {e}")
+            # Улучшенное логирование фатальной ошибки
+            logging.error(f"FATAL ERROR: Failed to initialize Firebase Admin SDK. Persistence will not work. Error: {e}")
+            db = None # Убеждаемся, что db равно None при ошибке
             return False
     elif not firebase_admin._apps:
          logging.warning("FIREBASE_CONFIG environment variable not found. Data persistence is disabled.")
+         db = None
          return False
     return True
 
@@ -87,6 +89,7 @@ def get_user_doc_ref(user_id):
 async def save_user_id(user_id, username, full_name):
     """Сохраняет ID пользователя в Firestore."""
     if not db:
+        logging.error(f"Cannot save user {user_id}. Firestore client is not initialized.")
         return
         
     doc_ref = get_user_doc_ref(user_id)
@@ -100,10 +103,12 @@ async def save_user_id(user_id, username, full_name):
     }
     
     try:
+        # NOTE: Эта синхронная функция оборачивается в asyncio.to_thread
         await asyncio.to_thread(doc_ref.set, user_data, merge=True)
         logging.info(f"User ID {user_id} saved/updated in Firestore.")
     except Exception as e:
-        logging.error(f"Error saving user ID {user_id} to Firestore: {e}")
+        # Добавлено агрессивное логирование ошибок
+        logging.error(f"CRITICAL ERROR SAVING TO FIREBASE! User ID: {user_id}. Error details: {e}")
 
 async def get_all_user_ids_from_db():
     """Загружает все ID пользователей из Firestore для рассылки."""
@@ -180,6 +185,84 @@ get_message_button = types.InlineKeyboardMarkup(
         [types.InlineKeyboardButton(text="Открыть🎁", callback_data="get_advent_message")]
     ]
 )
+
+@dp.message(F.text.startswith("/force_save_user"), F.from_user.id == int(ADMIN_ID))
+async def cmd_force_save_user(message: types.Message):
+    """Позволяет администратору принудительно добавить ID пользователя в базу данных."""
+    
+    # Извлекаем аргументы: /force_save_user <ID> <Full Name...>
+    parts = message.text.split(maxsplit=2)
+    
+    if len(parts) < 3:
+        return await message.answer(
+            "❌ Неверный формат. Используйте: /force_save_user <ID пользователя> <Полное имя>"
+        )
+        
+    user_id_str = parts[1].strip()
+    full_name = parts[2].strip()
+    
+    try:
+        user_id = int(user_id_str)
+    except ValueError:
+        return await message.answer("❌ ID пользователя должен быть числом.")
+
+    if not db:
+        return await message.answer("❌ Ошибка: База данных Firebase не инициализирована. Сохранение невозможно.")
+
+    # Принудительное сохранение
+    await save_user_id(
+        user_id=user_id,
+        username=None, # Username неизвестен при принудительном добавлении
+        full_name=full_name
+    )
+
+    # Проверка сохранения (опционально, но полезно)
+    target_user_ids = await get_all_user_ids_from_db()
+    if str(user_id) in target_user_ids:
+        await message.answer(
+            f"✅ Пользователь **{full_name}** (ID: `{user_id}`) **успешно добавлен** в базу данных Firestore.\n"
+            "Теперь он должен получать рассылки.",
+            parse_mode='Markdown'
+        )
+    else:
+        await message.answer(
+            f"⚠️ Пользователь **{full_name}** (ID: `{user_id}`) был обработан, но **не найден** при повторной проверке базы. Возможно, возникла ошибка доступа к Firestore. Проверьте логи.",
+            parse_mode='Markdown'
+        )
+
+@dp.message(F.text == "/check_users", F.from_user.id == int(ADMIN_ID))
+async def cmd_check_users(message: types.Message):
+    """Проверяет количество сохраненных пользователей в Firestore."""
+    logging.info(f"ADMIN_EVENT: /check_users initiated by {message.from_user.id}")
+    
+    if not db:
+        await message.answer("❌ Ошибка: База данных Firebase не инициализирована. Проверьте логи на ошибки при запуске.")
+        return
+
+    try:
+        target_user_ids = await get_all_user_ids_from_db()
+        count = len(target_user_ids)
+        
+        if count == 0:
+            report_text = "⚠️ В базе данных **нет сохраненных пользователей** (помимо администратора)."
+        else:
+            report_text = f"✅ В базе данных обнаружено **{count}** сохраненных пользователей."
+            # Добавим список ID для отладки
+            id_list = "\n".join(f"- `{id}`" for id in sorted(list(target_user_ids)))
+            
+            # Показываем только первые 10 ID, если их много
+            if len(target_user_ids) > 10:
+                report_text += "\n\n(Показаны только первые 10 ID)"
+                id_list = "\n".join(f"- `{id}`" for id in sorted(list(target_user_ids))[:10])
+                
+            report_text += f"\n\n**Список ID:**\n{id_list}"
+
+        await message.answer(report_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error during /check_users command: {e}")
+        await message.answer(f"❌ Произошла ошибка при получении данных из базы: {e}")
+
 
 @dp.message(F.text == "/start")
 async def cmd_start(message: types.Message):
@@ -300,7 +383,8 @@ async def cmd_broadcast(message: types.Message):
     target_user_ids = await get_all_user_ids_from_db()
     
     if not target_user_ids:
-        return await message.answer("Ошибка: Нет сохраненных пользователей для рассылки в базе данных.")
+        # Улучшенный ответ, чтобы предложить отладку
+        return await message.answer("❌ Ошибка: Нет сохраненных пользователей для рассылки в базе данных. Попробуйте команду /check_users для отладки.")
     
     success_count = 0
     fail_count = 0
