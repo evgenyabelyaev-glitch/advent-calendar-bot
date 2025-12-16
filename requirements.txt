@@ -1,2 +1,5 @@
 aiogram==3.*
 aiohttp==3.*
+aiogram
+aiohttp
+firebase-admin
