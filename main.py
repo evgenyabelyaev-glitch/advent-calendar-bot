@@ -63,24 +63,6 @@ def init_firebase():
             # Преобразуем JSON-строку в словарь для credentials
             firebase_config = json.loads(FIREBASE_CONFIG_JSON)
             
-            # Для Firebase Admin SDK нужны credentials. Используем serviceAccount
-            # Так как Canvas предоставляет только config, мы используем его
-            # Если это не сработает в конкретной среде, может потребоваться
-            # явное указание serviceAccountKey, но мы пытаемся использовать
-            # доступный механизм.
-            
-            # В среде Canvas мы обычно можем инициализировать Admin SDK без
-            # явного файла, если переменные окружения Google Cloud настроены.
-            # Если нет, то для Admin SDK нужен service account key.
-            
-            # В рамках Canvas-среды, мы будем использовать метод, который
-            # предполагает наличие необходимых учетных данных, или просто
-            # попытаемся инициализировать с предоставленным конфигом.
-            
-            # В случае Python Admin SDK, credentials.Certificate обычно требует JSON-файл.
-            # Мы будем использовать более простой подход, который часто работает
-            # в средах Google Cloud, или подставим заглушку:
-            
             # Подход 1: Простая инициализация (если окружение позволяет)
             firebase_admin.initialize_app(options={'projectId': firebase_config.get('projectId')})
             
@@ -224,7 +206,8 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == "get_advent_message")
 async def process_advent_callback(callback: types.CallbackQuery):
     """
-    Основная логика: сверяет текущий день и месяц с календарем и сохраняет ID пользователя.
+    Основная логика: сверяет текущий день и месяц с календарем, сохраняет ID пользователя 
+    и отправляет уведомление администратору о нажатии кнопки.
     """
     
     # --- ЛОГИРОВАНИЕ: Нажатие кнопки ---
@@ -238,6 +221,25 @@ async def process_advent_callback(callback: types.CallbackQuery):
             username=callback.from_user.username,
             full_name=callback.from_user.full_name
         )
+    
+    # --- УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ О НАЖАТИИ КНОПКИ ---
+    notification_text = (
+        f"🔔 {html.bold('КНОПКА АДВЕНТ-КАЛЕНДАРЯ НАЖАТА!')}\n"
+        f"Пользователь: {html.bold(callback.from_user.full_name)}\n"
+        f"ID: {html.code(callback.from_user.id)}\n"
+        f"Время: {datetime.now(TARGET_TZ).strftime('%H:%M:%S')}"
+    )
+    
+    try:
+        await bot.send_message(
+            chat_id=ADMIN_ID, 
+            text=notification_text, 
+            parse_mode='HTML'
+        )
+        logging.info(f"ADMIN_NOTIFICATION: Button press notification sent for User ID: {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"Error sending button notification to ADMIN_ID {ADMIN_ID}: {e}")
+    # --------------------------------------------------
 
     # 1. Получаем текущие дату и месяц в заданном часовом поясе
     current_date = datetime.now(TARGET_TZ)
@@ -407,4 +409,21 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
         
-        # Render/Cloud требует привязки к 0.0.0.0 и прослушивания порта из перемен
+        # Render/Cloud требует привязки к 0.0.0.0 и прослушивания порта из переменной PORT
+        site = web.TCPSite(runner, '0.0.0.0', WEB_SERVER_PORT)
+        logging.info(f"Starting web server on port {WEB_SERVER_PORT}")
+        await site.start()
+        
+        # Ждём, пока веб-сервер обрабатывает запросы
+        while True:
+            await asyncio.sleep(3600)
+            
+    except Exception as e:
+        logging.error(f"Error during webhook setup: {e}")
+        # Если не удалось запустить вебхук (например, при локальной отладке без порта)
+        logging.info("Falling back to polling mode...")
+        await dp.start_polling(bot)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
