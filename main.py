@@ -7,6 +7,12 @@ import locale # Модуль для работы с языковыми наст�
 from aiogram import Bot, Dispatcher, types, F, html
 from aiohttp import web # Требуется для запуска веб-сервера
 
+# --- ИМПОРТЫ ДЛЯ FIREBASE ---
+import firebase_admin
+from firebase_admin import credentials, firestore
+import json
+# ----------------------------
+
 # --- НАСТРОЙКА РУССКОЙ ЛОКАЛИ ---
 # Пытаемся установить русскую локаль для корректного отображения названия месяца (например, "декабря" вместо "December")
 try:
@@ -22,7 +28,6 @@ except locale.Error:
 
 # --- КОНФИГУРАЦИЯ ---
 # Токен бота будет получен из переменной окружения Railway (БОЛЕЕ БЕЗОПАСНО)
-# Если переменная не найдена, используется "ВАШ_ТОКЕН_БОТА" (только для локальной проверки)
 # Исправлено: Установлен предоставленный токен бота.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8317813238:AAEZly_kyYMZK961uJ32FVYR6xiB31XPylA") 
 
@@ -38,11 +43,104 @@ TARGET_TZ = timezone(timedelta(hours=3), name='MSK')
 # Исправлено: Установлен ID, предоставленный пользователем.
 ADMIN_ID = os.getenv("ADMIN_ID", "1126029973")
 
-# !!! ИДЕНТИФИКАТОРЫ ПОЛЬЗОВАТЕЛЕЙ !!!
-# Этот SET (набор) будет хранить ID всех пользователей, которые взаимодействовали с ботом.
-# Используется для рассылки сообщений (broadcast).
-# ВНИМАНИЕ: Данные хранятся только в памяти и будут сброшены при перезапуске бота.
-USER_IDS = set()
+# Переменные, предоставленные Canvas для Firebase
+APP_ID = os.environ.get('__app_id', 'default-app-id')
+FIREBASE_CONFIG_JSON = os.environ.get('__firebase_config')
+
+# --- ИДЕНТИФИКАТОРЫ ПОЛЬЗОВАТЕЛЕЙ (Теперь только для инициализации) ---
+# Теперь ID пользователей будут храниться в Firestore, а не в памяти.
+# Это временное хранилище теперь не используется для рассылки, но сохраним его как заглушку.
+# Для рассылки будем запрашивать актуальный список из базы.
+USER_IDS = set() 
+
+# --- НАСТРОЙКА FIREBASE ---
+db = None # Ссылка на Firestore
+def init_firebase():
+    """Инициализация Firebase с использованием конфигурации Canvas."""
+    global db
+    if FIREBASE_CONFIG_JSON and not firebase_admin._apps:
+        try:
+            # Преобразуем JSON-строку в словарь для credentials
+            firebase_config = json.loads(FIREBASE_CONFIG_JSON)
+            
+            # Для Firebase Admin SDK нужны credentials. Используем serviceAccount
+            # Так как Canvas предоставляет только config, мы используем его
+            # Если это не сработает в конкретной среде, может потребоваться
+            # явное указание serviceAccountKey, но мы пытаемся использовать
+            # доступный механизм.
+            
+            # В среде Canvas мы обычно можем инициализировать Admin SDK без
+            # явного файла, если переменные окружения Google Cloud настроены.
+            # Если нет, то для Admin SDK нужен service account key.
+            
+            # В рамках Canvas-среды, мы будем использовать метод, который
+            # предполагает наличие необходимых учетных данных, или просто
+            # попытаемся инициализировать с предоставленным конфигом.
+            
+            # В случае Python Admin SDK, credentials.Certificate обычно требует JSON-файл.
+            # Мы будем использовать более простой подход, который часто работает
+            # в средах Google Cloud, или подставим заглушку:
+            
+            # Подход 1: Простая инициализация (если окружение позволяет)
+            firebase_admin.initialize_app(options={'projectId': firebase_config.get('projectId')})
+            
+            db = firestore.client()
+            logging.info("Firebase initialized successfully.")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to initialize Firebase: {e}")
+            return False
+    elif not firebase_admin._apps:
+         logging.warning("FIREBASE_CONFIG environment variable not found. Data persistence is disabled.")
+         return False
+    return True
+
+# --- ФУНКЦИИ FIREBASE ДЛЯ ХРАНЕНИЯ ID ---
+
+def get_user_doc_ref(user_id):
+    """Возвращает ссылку на документ пользователя в Firestore."""
+    # Публичная коллекция: /artifacts/{appId}/public/data/users/{userId}
+    return db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('users').document(str(user_id))
+
+async def save_user_id(user_id, username, full_name):
+    """Сохраняет ID пользователя в Firestore."""
+    if not db:
+        return
+        
+    doc_ref = get_user_doc_ref(user_id)
+    
+    # Используем `set` с merge=True, чтобы обновить, но не перезаписать другие поля
+    user_data = {
+        'id': user_id,
+        'username': username,
+        'full_name': full_name,
+        'last_interaction': datetime.now(timezone.utc)
+    }
+    
+    try:
+        await asyncio.to_thread(doc_ref.set, user_data, merge=True)
+        logging.info(f"User ID {user_id} saved/updated in Firestore.")
+    except Exception as e:
+        logging.error(f"Error saving user ID {user_id} to Firestore: {e}")
+
+async def get_all_user_ids_from_db():
+    """Загружает все ID пользователей из Firestore для рассылки."""
+    if not db:
+        return set()
+        
+    try:
+        # Получаем коллекцию пользователей: /artifacts/{appId}/public/data/users
+        collection_ref = db.collection('artifacts').document(APP_ID).collection('public').document('data').collection('users')
+        
+        # Получаем все документы в коллекции
+        users_stream = await asyncio.to_thread(collection_ref.stream)
+        
+        user_ids = {doc.id for doc in users_stream}
+        logging.info(f"Loaded {len(user_ids)} user IDs from Firestore.")
+        return user_ids
+    except Exception as e:
+        logging.error(f"Error loading user IDs from Firestore: {e}")
+        return set()
 
 # --- СООБЩЕНИЯ АДВЕНТ-КАЛЕНДАРЯ ---
 # КЛЮЧ - ДЕНЬ МЕСЯЦА (1, 2, 3...), ЗНАЧЕНИЕ - ТЕКСТ ПОСЛАНИЯ
@@ -103,16 +201,19 @@ get_message_button = types.InlineKeyboardMarkup(
 
 @dp.message(F.text == "/start")
 async def cmd_start(message: types.Message):
-    """Отправляет приветственное сообщение с кнопкой."""
+    """Отправляет приветственное сообщение с кнопкой и сохраняет ID пользователя."""
     
     # --- ЛОГИРОВАНИЕ: Запуск бота ---
     logging.info(f"USER_EVENT: START | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
     # ---------------------------------
     
-    # Добавляем ID пользователя в SET для рассылки, если он не администратор
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
     if str(message.from_user.id) != ADMIN_ID:
-        USER_IDS.add(message.from_user.id)
-        logging.info(f"USER_ID added to set: {message.from_user.id}")
+        await save_user_id(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name
+        )
 
     await message.answer(
         f"Привет! Это твой адвент-календарь на декабрь. "
@@ -123,17 +224,20 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == "get_advent_message")
 async def process_advent_callback(callback: types.CallbackQuery):
     """
-    Основная логика: сверяет текущий день и месяц с календарем.
+    Основная логика: сверяет текущий день и месяц с календарем и сохраняет ID пользователя.
     """
     
     # --- ЛОГИРОВАНИЕ: Нажатие кнопки ---
     logging.info(f"USER_EVENT: BUTTON_PRESS | Callback: {callback.data} | User ID: {callback.from_user.id} | Name: {callback.from_user.full_name}")
     # ---------------------------------
     
-    # Добавляем ID пользователя в SET для рассылки, если он не администратор
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
     if str(callback.from_user.id) != ADMIN_ID:
-        USER_IDS.add(callback.from_user.id)
-        logging.info(f"USER_ID added to set: {callback.from_user.id}")
+        await save_user_id(
+            user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            full_name=callback.from_user.full_name
+        )
 
     # 1. Получаем текущие дату и месяц в заданном часовом поясе
     current_date = datetime.now(TARGET_TZ)
@@ -190,35 +294,38 @@ async def cmd_broadcast(message: types.Message):
     if not text_to_send:
         return await message.answer("Пожалуйста, укажите текст для рассылки. Формат: /broadcast <текст>")
 
-    if not USER_IDS:
-        return await message.answer("Ошибка: Нет сохраненных пользователей для рассылки. Сначала пользователи должны нажать /start.")
+    # 2. Загружаем актуальный список пользователей из Firestore
+    target_user_ids = await get_all_user_ids_from_db()
+    
+    if not target_user_ids:
+        return await message.answer("Ошибка: Нет сохраненных пользователей для рассылки в базе данных.")
     
     success_count = 0
     fail_count = 0
     
-    # 2. Итерация по всем сохраненным ID
-    for user_id in list(USER_IDS): # Используем list() для безопасной итерации
+    # 3. Итерация по всем сохраненным ID
+    for user_id in target_user_ids: # Используем SET из базы
         try:
-            # 3. Отправляем сообщение пользователю
+            # 4. Отправляем сообщение пользователю
             await bot.send_message(
-                chat_id=user_id,
+                chat_id=int(user_id), # ID из Firestore - строка, преобразуем в число
                 text=text_to_send,
                 parse_mode='HTML'
             )
             success_count += 1
         except Exception as e:
-            # Пользователь мог заблокировать бота, что вызовет ошибку.
+            # Пользователь мог заблокировать бота
             fail_count += 1
             logging.error(f"BROADCAST_ERROR: Failed to send message to {user_id}: {e}")
     
-    # 4. Отправляем отчет администратору
+    # 5. Отправляем отчет администратору
     await message.answer(
         f"✅ Рассылка завершена.\n"
-        f"Всего получателей: {len(USER_IDS)}\n"
+        f"Всего получателей (из базы): {len(target_user_ids)}\n"
         f"Успешно отправлено: {success_count}\n"
         f"Неудачно (бот заблокирован/ошибка): {fail_count}"
     )
-    logging.info(f"ADMIN_BROADCAST_REPORT: Total: {len(USER_IDS)}, Success: {success_count}, Fail: {fail_count}")
+    logging.info(f"ADMIN_BROADCAST_REPORT: Total: {len(target_user_ids)}, Success: {success_count}, Fail: {fail_count}")
 
 
 @dp.message()
@@ -226,7 +333,7 @@ async def forward_all_messages(message: types.Message):
     """
     Обрабатывает любые сообщения (текст, фото, стикеры и т.д.), 
     которые не были перехвачены другими обработчиками, и пересылает 
-    их администратору.
+    их администратору, а также сохраняет ID пользователя.
     """
     
     # --- ЛОГИРОВАНИЕ: Получение произвольного сообщения ---
@@ -234,10 +341,13 @@ async def forward_all_messages(message: types.Message):
     logging.info(f"USER_EVENT: ARBITRARY_MESSAGE | Content: '{log_text}' | User ID: {message.from_user.id} | Name: {message.from_user.full_name}")
     # ------------------------------------------------------
     
-    # Сохраняем ID пользователя в SET для рассылки, если он не администратор
+    # Сохраняем ID пользователя в Firestore (если он не администратор)
     if str(message.from_user.id) != ADMIN_ID:
-        USER_IDS.add(message.from_user.id)
-        logging.info(f"USER_ID added to set from forward_all_messages: {message.from_user.id}")
+        await save_user_id(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            full_name=message.from_user.full_name
+        )
 
     try:
         # Проверяем, что ADMIN_ID установлен и не является заглушкой
@@ -275,8 +385,11 @@ async def forward_all_messages(message: types.Message):
 # --- НАСТРОЙКА ДЛЯ RENDER (WEBHOOK) ---
 async def main():
     """
-    Инициализирует и запускает веб-сервер для обработки вебхуков.
+    Инициализирует Firebase и запускает веб-сервер для обработки вебхуков.
     """
+    # Инициализация Firebase перед запуском бота
+    init_firebase()
+    
     try:
         from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
         
@@ -294,21 +407,4 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
         
-        # Render/Cloud требует привязки к 0.0.0.0 и прослушивания порта из переменной PORT
-        site = web.TCPSite(runner, '0.0.0.0', WEB_SERVER_PORT)
-        logging.info(f"Starting web server on port {WEB_SERVER_PORT}")
-        await site.start()
-        
-        # Ждём, пока веб-сервер обрабатывает запросы
-        while True:
-            await asyncio.sleep(3600)
-            
-    except Exception as e:
-        logging.error(f"Error during webhook setup: {e}")
-        # Если не удалось запустить вебхук (например, при локальной отладке без порта)
-        logging.info("Falling back to polling mode...")
-        await dp.start_polling(bot)
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+        # Render/Cloud требует привязки к 0.0.0.0 и прослушивания порта из перемен
