@@ -112,8 +112,10 @@ async def process_advent_callback(callback: types.CallbackQuery):
     # Проверяем наличие сообщения для текущего месяца и дня
     if today_month in ADVENT_MESSAGES and today_day in ADVENT_MESSAGES[today_month]:
         msg = ADVENT_MESSAGES[today_month][today_day]
-        # Исправлено: замена одинарных кавычек на двойные во внешней части f-строки
-        text = f"🗓️ {html.bold(f"Послание на {current_date.strftime('%d %B')}:")}\n\n{msg}"
+        # Исправлено: использование разных кавычек для вложенных f-строк во избежание SyntaxError
+        date_str = current_date.strftime('%d %B')
+        header_text = f"Послание на {date_str}:"
+        text = f"🗓️ {html.bold(header_text)}\n\n{msg}"
     else:
         text = "😴 На сегодня заданий пока нет. Загляни завтра!"
 
