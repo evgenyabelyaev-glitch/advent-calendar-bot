@@ -50,7 +50,7 @@ ADVENT_MESSAGES = {
         31: "✨ Финал декабря! С наступающим, мой главный подарок! ❤️🥂🎁"
     },
     1: {
-        1: "🌟 С Новым Годом! Пусть этот год будет полон любви! (Задание скоро появится)",
+        1: "🌟 С Новым Годом! Пусть этот год будет полн любви! (Задание скоро появится)",
         2: "Задание на 2 января",
         3: "Задание на 3 января",
         4: "Задание на 4 января",
@@ -112,7 +112,8 @@ async def process_advent_callback(callback: types.CallbackQuery):
     # Проверяем наличие сообщения для текущего месяца и дня
     if today_month in ADVENT_MESSAGES and today_day in ADVENT_MESSAGES[today_month]:
         msg = ADVENT_MESSAGES[today_month][today_day]
-        text = f"🗓️ {html.bold(f'Послание на {current_date.strftime('%d %B')}:')}\n\n{msg}"
+        # Исправлено: замена одинарных кавычек на двойные во внешней части f-строки
+        text = f"🗓️ {html.bold(f"Послание на {current_date.strftime('%d %B')}:")}\n\n{msg}"
     else:
         text = "😴 На сегодня заданий пока нет. Загляни завтра!"
 
